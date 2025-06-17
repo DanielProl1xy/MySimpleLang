@@ -38,7 +38,8 @@ typedef enum
     BI_MINUS,
     BI_MULT,
     BI_DIV,
-    BI_EQ,
+    BI_SET,
+    BI_LESS,
 } BinopKind;
 
 typedef enum
@@ -46,6 +47,7 @@ typedef enum
     EX_CALL,
     EX_BINOP,
     EX_ARG,
+    EX_ALLOCATE,
 } ExpressionKind;
 
 typedef enum 
@@ -97,8 +99,11 @@ typedef struct
     
     // in case of a call
     // argc - count of agrs
-    size_t argc;
-    size_t args[MAX_ARGS_COUNT];
+    struct {
+        size_t argc;
+        int64_t args[MAX_ARGS_COUNT];
+        char name[MAX_NAME_LENGTH];
+    } call;
 
 } Expression;
 
@@ -163,6 +168,47 @@ int main(int argc, char **argv)
     return 0;
 }
 
+// TODO: put result onto the stack
+int64_t evalExpression(Function *function, Expression *expr, int64_t *stp)
+{
+    if(expr->kind == EX_BINOP)
+    {
+        Expression *lhs = &function->expressions.data[expr->binop.lhs];
+        Expression *rhs = &function->expressions.data[expr->binop.rhs];
+        if(expr->binop.kind == BI_PLUS) 
+        {
+            return evalExpression(function, lhs, stp) + evalExpression(function, rhs, stp);
+        } 
+        if(expr->binop.kind == BI_MINUS) 
+        {
+            return evalExpression(function, lhs, stp) - evalExpression(function, rhs, stp);
+        } 
+        if(expr->binop.kind == BI_MULT) 
+        {
+            return evalExpression(function, lhs, stp) * evalExpression(function, rhs, stp);
+        } 
+        if(expr->binop.kind == BI_DIV) 
+        {
+            return evalExpression(function, lhs, stp) / evalExpression(function, rhs, stp);
+        } 
+        if(expr->binop.kind == BI_LESS)
+        {
+            return evalExpression(function, lhs, stp) < evalExpression(function, rhs, stp);
+        }
+    }
+    if(expr->kind == EX_ARG)
+    {
+        if(expr->arg == ARG_VAR) {
+            return *(stp - expr->value);
+        }
+        if(expr->arg == ARG_LITERAL) {
+            return expr->value;
+        }
+    }
+    printf("ERROR: Not supported expression %d\n", expr->kind);
+    return 0;
+}
+
 bool runFunction(Program *program, const char *name)
 {
     int index = -1;
@@ -180,25 +226,47 @@ bool runFunction(Program *program, const char *name)
         return false;
     }
     
-    size_t allocatedSize = p.functions.data[index].stackVars.length;
+    Function *function = &p.functions.data[index];
+    size_t allocatedSize =function->stackVars.length;
     int64_t stack[STACK_SIZE];
 
+    int64_t *stp = ((&stack[STACK_SIZE - 1]));
     int64_t *sbp = ((&stack[STACK_SIZE - 1]) - allocatedSize);
-    printf("\nRunning function \"%s\"\n", name);
+    printf("\nINFO: Running function \"%s\"\n", name);
     printf("INFO: Allocated %zu words\n", allocatedSize);
     printf("INFO: sbp is 0x%p\n", sbp);
 
-    for(int i = 0; i < p.functions.data[index].expressions.length; ++i)
+    for(int i = 0; i < function->expressions.length; ++i)
     {
-        Expression *expr = &p.functions.data[index].expressions.data[i];
-        if(expr->binop.kind == BI_EQ) {
-            int64_t *ptr = sbp - p.functions.data[index].expressions.data[expr->binop.lhs].value;
-            *ptr = p.functions.data[index].expressions.data[expr->binop.rhs].value;
-            continue;
+        Expression *expr = &function->expressions.data[i];
+        if(expr->kind == EX_BINOP)
+        {
+            if (expr->binop.kind == BI_SET)
+            {
+                Expression *lhs = &function->expressions.data[expr->binop.lhs];
+                if(lhs->kind != EX_ARG && lhs->arg != ARG_VAR) {
+                    printf("ERROR: lhs must be variable");
+                    return false;
+                }
+                int64_t *ptr = stp - function->expressions.data[expr->binop.lhs].value;
+                Expression *rhs = &function->expressions.data[expr->binop.rhs];
+                *ptr = evalExpression(function, rhs, stp);
+            }   
+            
         }
 
         if(expr->kind == EX_CALL) {
-            printf("%ld\n",  *(sbp - p.functions.data[index].expressions.data[expr->args[0]].value));
+            if(strcmp(expr->call.name, "print") == 0)
+            {
+                for(int j = 0; j < expr->call.argc; ++j)
+                    printf("%ld ",  evalExpression(function, &function->expressions.data[expr->call.args[j]], stp));
+                printf("\n");
+            }
+            else 
+            {
+                printf("ERROR: unknown function \"%s\"\n", expr->call.name);
+                return false;
+            }
             continue;
         }
     }
@@ -226,13 +294,13 @@ StringSlice *readEntireFile(const char *path)
     return slice;
 }
 
-bool getNextToken(Lexer *lex) {
+Token *getNextToken(Lexer *lex) {
 
     // Parse code
     char *buff = lex->file->data;
     if(lex->cur >= lex->file->length - 1) {
         // printf("EOF\n");
-        return false;
+        return NULL;
     } 
 
     for(size_t i = lex->cur; i < lex->file->length; ) 
@@ -244,8 +312,8 @@ bool getNextToken(Lexer *lex) {
             continue;
         }
         // Get next token
-        char cTkn[256] = {0};
         Token token;
+        char cTkn[256] = {0};
         token.kind = T_LITERAL;
         if(isalnum(buff[i]))
         {
@@ -254,7 +322,7 @@ bool getNextToken(Lexer *lex) {
                 ++tokenLen;
                 if(tokenLen > 255) {
                     printf("ERROR: Token must be not be longer than 255 bytes\n");
-                    return -1;
+                    return NULL;
                 }
             }
             cTkn[tokenLen + 1] = '\0';
@@ -278,7 +346,7 @@ bool getNextToken(Lexer *lex) {
                 break;
                 if(tokenLen > 255) {
                     printf("ERROR: Token must be not be longer than 255 bytes\n");
-                    return -1;
+                    return NULL;
                 }
             }
             cTkn[tokenLen + 1] = '\0';
@@ -330,7 +398,13 @@ bool getNextToken(Lexer *lex) {
                 }
                 if(strcmp(cTkn,"=") == 0)
                 {
-                    token.binop.kind = BI_EQ;
+                    token.binop.kind = BI_SET;
+                    token.kind = T_BINOP;
+                }
+
+                if(strcmp(cTkn,"<") == 0)
+                {
+                    token.binop.kind = BI_LESS;
                     token.kind = T_BINOP;
                 }
         }
@@ -347,13 +421,11 @@ bool getNextToken(Lexer *lex) {
                 break;
             }
             lex->tokens.data[lex->tokens.length] = token;
-            lex->tokens.length++;
             i += tokenLen;
             lex->cur = i;
-            break;
+            return &lex->tokens.data[lex->tokens.length++];
         }
     }
-    return true;
 }
 
 bool expectToken(Lexer *lex, TokenKind kind) {
@@ -364,7 +436,6 @@ bool expectToken(Lexer *lex, TokenKind kind) {
 
 bool expectFunctionDecl(Lexer *lex, Function *f)
 {
-    
     getNextToken(lex);
     if(expectToken(lex, T_NAME))
     {
@@ -404,90 +475,129 @@ bool expectFunctionDecl(Lexer *lex, Function *f)
     return true;
 }
 
-bool parseExpression(Lexer *lex, Function *f)
-{   
-    getNextToken(lex);
-    if(expectToken(lex, T_NAME) || expectToken(lex, T_LITERAL)) {
-        
-        char *name = lex->tokens.data[lex->tokens.length - 1].value.name;
-        uint64_t val = lex->tokens.data[lex->tokens.length - 1].value.lit;
-        
-        Expression expr = {0};
-        expr.kind = EX_ARG;
-        expr.arg = expectToken(lex, T_NAME) ? ARG_VAR : ARG_LITERAL;
-        
-        getNextToken(lex);
-        if(expectToken(lex, T_BINOP)) {
-            if(expr.arg == ARG_LITERAL) {
-                expr.value = val;
-            } else {
-                int index = -1;
-                for (size_t i = 0; i < f->stackVars.length; ++i)
-                {
-                    if(strcmp(name, f->stackVars.data[i]) == 0)
-                    {
-                        index = i;
-                        break;
-                    }
-                }
-                if(index < 0) {
-                    index = f->stackVars.length++;
-                    strcpy(f->stackVars.data[index], name);
-                }
-                expr.value = index;            
-            }
-            Expression bi = {0};
-            bi.kind = EX_BINOP;
-            bi.binop.kind = lex->tokens.data[lex->tokens.length - 1].binop.kind;
-            bi.binop.lhs = f->expressions.length + 1;
-            bi.binop.rhs = f->expressions.length + 2;
-            f->expressions.data[f->expressions.length++] = bi;
-            f->expressions.data[f->expressions.length++] = expr;
-            
-            parseExpression(lex, f);
+int addVariable(Function *f, const char* name)
+{
+    int index = f->stackVars.length++;
+    strcpy(f->stackVars.data[index], name);
+    f->stackVars.data[index];
+
+    return index;
+}
+
+bool findVariableName(Function *f, const char *name, int *index)
+{
+    *index = -1;
+    for (int i = 0; i < f->stackVars.length; ++i)
+    {
+        if(strcmp(name, f->stackVars.data[i]) == 0)
+        {
+            *index = i;
             return true;
         }
-        
-        if(expectToken(lex, T_OPPAR)) {
-            expr.kind = EX_CALL;
-            expr.value = 64;
+    }
+    return false;  
+}
+
+size_t parseNextExpression(Lexer *lex, Function *f)
+{   
+    Token *lastToken = getNextToken(lex);
+    Expression expr = {0};
+
+
+    // if(expectToken(lex, T_OPPAR))
+    // {
+    //     parseNextExpression(lex, f);
+    // }
+
+    int index;
+    if(expectToken(lex, T_NAME)) 
+    {
+        char *name = lastToken->value.name;
+        if(strcmp(name, "var") == 0)
+        {   
+            Token *var = getNextToken(lex);
+            if(!expectToken(lex, T_NAME)) 
+            {
+                printf("ERROR: expected variable name\n");
+                return 0;
+            }
+            if(!findVariableName(f, var->value.name, &index)) 
+            {
+                index = addVariable(f, var->value.name);
+                expr.kind = EX_ALLOCATE;
+                expr.arg = ARG_VAR;
+                expr.value = index;
+                f->expressions.data[f->expressions.length++] = expr;
+                return parseNextExpression(lex, f);
+            }
+            else 
+            {
+                printf("ERROR: Variable %s is already defined\n", var->value.name);
+                return 0;
+            }
+        }
+        else if(findVariableName(f, lastToken->value.name, &index))
+        {
+            expr.kind = EX_ARG;
+            expr.arg = ARG_VAR;
+            expr.value = index;
             f->expressions.data[f->expressions.length++] = expr;
-            Expression *added = &f->expressions.data[f->expressions.length - 1];
+            return parseNextExpression(lex, f);
+        }
+        Token *n = getNextToken(lex);
+        if(expectToken(lex, T_OPPAR))
+        {
+            strcpy(expr.call.name, lastToken->value.name);
+            expr.kind = EX_CALL;
             while(!expectToken(lex, T_CLPAR)) {
                 if(!expectToken(lex, T_COMMA) && !(expectToken(lex, T_OPPAR))) {
-                    return false;
+                    break;;
                 }
-                if(parseExpression(lex, f)) {
-                    added->args[added->argc++] = f->expressions.length - 1;
+                size_t next = parseNextExpression(lex, f);
+                if(next > 0) {
+                    expr.call.args[expr.call.argc++] = next;
+                    getNextToken(lex);
                 }
             }
+            f->expressions.data[f->expressions.length++] = expr;
             getNextToken(lex);
-            return true;
+            return f->expressions.length - 1;
         }
-        if(expr.arg == ARG_LITERAL) {
-            expr.value = val;
-        } else {
-            int index = -1;
-            for (size_t i = 0; i < f->stackVars.length; ++i)
+        printf("ERROR: Invalid syntax\n");
+        return 0;
+    }
+
+    if(expectToken(lex, T_BINOP))
+    {
+        Expression *lhs = &f->expressions.data[f->expressions.length - 1];
+        if(lastToken->binop.kind == BI_SET)
+        {
+            if(lhs->kind != EX_ALLOCATE && lhs->kind != EX_ARG) 
             {
-                if(strcmp(name, f->stackVars.data[i]) == 0)
-                {
-                    index = i;
-                    break;
-                }
+                printf("ERROR: LHS expression expected\n");
+                return 0;
             }
-            if(index < 0) {
-                index = f->stackVars.length++;
-                strcpy(f->stackVars.data[index], name);
-            }
-            expr.value = index;            
         }
+        expr.kind = EX_BINOP;
+        expr.binop.kind = lastToken->binop.kind;
+        expr.binop.lhs = f->expressions.length - 1;
+        expr.binop.rhs = parseNextExpression(lex, f);
         f->expressions.data[f->expressions.length++] = expr;
+        return f->expressions.length - 1;
     }
-    else {
-        return false;
+
+    if(expectToken(lex, T_LITERAL))
+    {
+        int64_t value = lastToken->value.lit;
+        expr.kind = EX_ARG;
+        expr.arg = ARG_LITERAL;
+        expr.value = value;
+        f->expressions.data[f->expressions.length++] = expr;
+        getNextToken(lex);
+        return f->expressions.length - 1;
     }
-    return true;
+
+    return f->expressions.length - 1;
 }
 
 bool expectFuctnionImpl(Lexer *lex, Function *f) 
@@ -499,12 +609,13 @@ bool expectFuctnionImpl(Lexer *lex, Function *f)
     }
 
     while(!expectToken(lex, T_CLCURL)) {
-        if(parseExpression(lex, f)) {
+        const int r = parseNextExpression(lex, f);
+        if(r > 0) {
             if(!expectToken(lex, T_SEMI)) {
                 printf("ERROR: semicolon expected\n");
                 return false;
             }
-        }        
+        } else return false;        
     }
     return true;
 }
@@ -520,9 +631,9 @@ void printExpression(Expression expressions[], size_t index) {
     
     switch (expr.kind) {
         case EX_CALL:
-            printf("    Kind: EX_CALL\n");
-            for (size_t i = 0; i < expr.argc; i++) {
-                printf("        Arg: %zu\n", expr.args[i]);
+            printf("    Kind: EX_CALL %s\n", expr.call.name);
+            for (size_t i = 0; i < expr.call.argc; i++) {
+                printf("        Arg: %zu\n", expr.call.args[i]);
             }
             break;
         case EX_BINOP:
@@ -533,7 +644,8 @@ void printExpression(Expression expressions[], size_t index) {
                 case BI_MINUS: printf("-\n"); break;
                 case BI_MULT: printf("*\n"); break;
                 case BI_DIV: printf("/\n"); break;
-                case BI_EQ: printf("=\n"); break;
+                case BI_SET: printf("=\n"); break;
+                case BI_LESS: printf("<\n"); break;
             }
             break;
         case EX_ARG:
@@ -543,6 +655,10 @@ void printExpression(Expression expressions[], size_t index) {
                 case ARG_LITERAL: printf("Literal, Value: %zu\n", expr.value); break;
                 case ARG_VAR: printf("Variable, Index: %zu\n", expr.value); break;
             }
+            break;
+        case EX_ALLOCATE:
+            printf("    Kind: EX_ALLOCATE\n");
+            printf("    Stack index: %d\n", expr.value);
             break;
         default:
             printf("    Unknown Expression Kind\n");

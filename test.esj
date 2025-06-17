@@ -1,7 +1,6 @@
 main() 
 {
-    a = 5;
-    b = 35;
-    print(a);
-    print(b);
+    var a = 2;
+    var b = 3;
+    print(b < 1);
 }
