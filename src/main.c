@@ -511,7 +511,6 @@ size_t parseNextExpression(Lexer *lex, Function *f)
 {   
     Token *lastToken = getNextToken(lex);
     Expression expr = {0};
-
     // if(expectToken(lex, T_OPPAR))
     // {
     //     parseNextExpression(lex, f);
@@ -562,7 +561,7 @@ size_t parseNextExpression(Lexer *lex, Function *f)
                     break;;
                 }
                 size_t next = parseNextExpression(lex, f);
-                if(next > 0) {
+                if(next >= 0) {
                     expr.call.args[expr.call.argc++] = next;
                     getNextToken(lex);
                 }
