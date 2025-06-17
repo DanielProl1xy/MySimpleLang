@@ -234,7 +234,7 @@ bool runFunction(Program *program, const char *name)
     int64_t *sbp = ((&stack[STACK_SIZE - 1]) - allocatedSize);
     printf("\nINFO: Running function \"%s\"\n", name);
     printf("INFO: Allocated %zu words\n", allocatedSize);
-    printf("INFO: sbp is 0x%p\n", sbp);
+    printf("INFO: sbp is 0x%p\n\n", sbp);
 
     for(int i = 0; i < function->expressions.length; ++i)
     {
@@ -410,7 +410,7 @@ Token *getNextToken(Lexer *lex) {
         }
 
         if(tokenLen > 0) {
-            // printf("%d: %s\n", token.kind, cTkn);
+            printf("%d: %s\n", token.kind, cTkn);
             switch (token.kind)
             {
                 case T_NAME:
@@ -432,47 +432,6 @@ bool expectToken(Lexer *lex, TokenKind kind) {
     bool valid = lex->tokens.data[lex->tokens.length - 1].kind == kind;
 
     return valid;
-}
-
-bool expectFunctionDecl(Lexer *lex, Function *f)
-{
-    getNextToken(lex);
-    if(expectToken(lex, T_NAME))
-    {
-        strcpy(f->name, lex->tokens.data[lex->tokens.length - 1].value.name);
-        getNextToken(lex);
-        if(expectToken(lex, T_OPPAR)) {
-            while(!expectToken(lex, T_CLPAR)) {
-                if(expectToken(lex, T_OPCURL) || expectToken(lex, T_COMMA))
-                {
-                    char *name = lex->tokens.data[lex->tokens.length - 1].value.name;
-                    int index = -1;
-                    for (size_t i = 0; i < f->stackVars.length; ++i)
-                    {
-                        if(strcmp(name, f->stackVars.data[i]) == 0)
-                        {
-                            index = i;
-                            break;
-                        }
-                    }
-                    if(index < 0) {
-                        index = f->stackVars.length++;
-                        strcpy(f->stackVars.data[index], name);
-                    }
-                    getNextToken(lex);
-                    if(!expectToken(lex, T_NAME)) {
-                        return false;
-                    }
-
-                }
-                getNextToken(lex); 
-            }
-            if(!expectToken(lex, T_CLPAR))  {
-                return false;
-            }
-        }
-    }
-    return true;
 }
 
 int addVariable(Function *f, const char* name)
@@ -498,11 +457,44 @@ bool findVariableName(Function *f, const char *name, int *index)
     return false;  
 }
 
+bool expectFunctionDecl(Lexer *lex, Function *f)
+{
+    getNextToken(lex);
+    if(expectToken(lex, T_NAME))
+    {
+        strcpy(f->name, lex->tokens.data[lex->tokens.length - 1].value.name);
+        Token *lastToken = getNextToken(lex);
+        if(expectToken(lex, T_OPPAR)) {
+            while(!expectToken(lex, T_CLPAR)) {
+                if(expectToken(lex, T_OPPAR) || expectToken(lex, T_COMMA))
+                {
+                    lastToken = getNextToken(lex);
+                    if(expectToken(lex, T_NAME))
+                    {
+                        char *name = lastToken->value.name;
+                        int index;
+                        if(!findVariableName(f, name, &index)) {
+                            addVariable(f, name);
+                        } else {
+                            printf("ERROR: Argument %s is already defined\n", name);
+                            return false;
+                        }
+                    }           
+                }
+                getNextToken(lex); 
+            }
+            if(!expectToken(lex, T_CLPAR))  {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 size_t parseNextExpression(Lexer *lex, Function *f)
 {   
     Token *lastToken = getNextToken(lex);
     Expression expr = {0};
-
 
     // if(expectToken(lex, T_OPPAR))
     // {
