@@ -135,7 +135,8 @@ typedef struct
 StringSlice *readEntireFile();
 bool parseCode(Lexer *lex);
 void printExpression(Expression expressions[], size_t index);
-bool runFunction(Program *program, const char *name);
+
+bool runFunction(Program *program, const char *name, int64_t *args, size_t argc);
 
 static Program p = {0};
 
@@ -147,6 +148,9 @@ int main(int argc, char **argv)
     }
 
     const char *inputPath = argv[1];
+
+    argc -= 2;
+    argv += 2;
 
     printf("INFO: Input path: %s\n", inputPath);
 
@@ -161,7 +165,14 @@ int main(int argc, char **argv)
 
     parseCode(&l);
 
-    runFunction(&p, "main");
+    int64_t args[MAX_ARGS_COUNT];
+
+    for(int i = 0; i < argc; ++i) {
+        args[i] = atoi(argv[i]);
+        printf("Arg %d = %d\n", i, args[i]);
+    }
+
+    runFunction(&p, "main", args, argc);
 
     free(l.file);
     
@@ -209,7 +220,7 @@ int64_t evalExpression(Function *function, Expression *expr, int64_t *stp)
     return 0;
 }
 
-bool runFunction(Program *program, const char *name)
+bool runFunction(Program *program, const char *name, int64_t *args, size_t argc)
 {
     int index = -1;
     for(int i = 0; i < p.functions.length; ++i)
@@ -232,6 +243,11 @@ bool runFunction(Program *program, const char *name)
 
     int64_t *stp = ((&stack[STACK_SIZE - 1]));
     int64_t *sbp = ((&stack[STACK_SIZE - 1]) - allocatedSize);
+
+    for(int i = 0; i < argc; ++i) {
+        *(stp - i) = args[i];    
+    }
+
     printf("\nINFO: Running function \"%s\"\n", name);
     printf("INFO: Allocated %zu words\n", allocatedSize);
     printf("INFO: sbp is 0x%p\n\n", sbp);
