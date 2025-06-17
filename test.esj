@@ -1,0 +1,7 @@
+main() 
+{
+    a = 5;
+    b = 35;
+    print(a);
+    print(b);
+}
