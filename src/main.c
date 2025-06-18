@@ -169,7 +169,6 @@ int main(int argc, char **argv)
 
     for(int i = 0; i < argc; ++i) {
         args[i] = atoi(argv[i]);
-        printf("Arg %d = %d\n", i, args[i]);
     }
 
     runFunction(&p, "main", args, argc);
@@ -507,6 +506,7 @@ bool expectFunctionDecl(Lexer *lex, Function *f)
     return true;
 }
 
+
 size_t parseNextExpression(Lexer *lex, Function *f)
 {   
     Token *lastToken = getNextToken(lex);
@@ -557,17 +557,19 @@ size_t parseNextExpression(Lexer *lex, Function *f)
             strcpy(expr.call.name, lastToken->value.name);
             expr.kind = EX_CALL;
             while(!expectToken(lex, T_CLPAR)) {
-                if(!expectToken(lex, T_COMMA) && !(expectToken(lex, T_OPPAR))) {
-                    break;;
-                }
+                printf("Parse argument\n");
                 size_t next = parseNextExpression(lex, f);
-                if(next >= 0) {
+                if(next > 0) {
+                    printf("Arg parsed\n");
                     expr.call.args[expr.call.argc++] = next;
-                    getNextToken(lex);
+                    if(!expectToken(lex, T_COMMA) && !(expectToken(lex, T_CLPAR))) {
+                        printf("Invalid syntax\n");
+                        return 0;
+                    }
                 }
             }
-            f->expressions.data[f->expressions.length++] = expr;
             getNextToken(lex);
+            f->expressions.data[f->expressions.length++] = expr;
             return f->expressions.length - 1;
         }
         printf("ERROR: Invalid syntax\n");
@@ -600,9 +602,10 @@ size_t parseNextExpression(Lexer *lex, Function *f)
         expr.arg = ARG_LITERAL;
         expr.value = value;
         f->expressions.data[f->expressions.length++] = expr;
-        getNextToken(lex);
-        return f->expressions.length - 1;
+        return parseNextExpression(lex, f);
     }
+
+    if(expectToken(lex, T_CLCURL)) return 0;
 
     return f->expressions.length - 1;
 }
@@ -616,7 +619,9 @@ bool expectFuctnionImpl(Lexer *lex, Function *f)
     }
 
     while(!expectToken(lex, T_CLCURL)) {
+        printf("Start new line\n");
         const int r = parseNextExpression(lex, f);
+        printf("End new line\n");
         if(r > 0) {
             if(!expectToken(lex, T_SEMI)) {
                 printf("ERROR: semicolon expected\n");
